@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # NexT
 
 > 精于心，简于形
@@ -33,3 +34,6 @@ NexT is built for easily use with elegant appearance. First things first, always
 支付宝捐赠链接还是要有的，万一真的有人捐呢。
 
 ![支付宝扫码捐赠](http://7lryc0.com1.z0.glb.clouddn.com/a6x049034plyvjm1rvn4h28%20%281%29.png)
+=======
+# DjiangLiu.github.io
+>>>>>>> 5d64c1425f930e07747c102bfa7b3bbf594f455b

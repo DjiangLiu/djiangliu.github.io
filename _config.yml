@@ -291,12 +291,10 @@ sidebar:
   #Title: http://example.com/
 links_title: 推荐阅读
 links:
-  阮一峰的网络日志: http://www.ruanyifeng.com/blog/archives.html
-  R的极客理想系列: http://blog.fens.me/series-r/
-  谢益辉: https://yihui.name/
-  解螺旋的矿工: http://www.huangshujia.me/
-  GuangchuangYu: https://github.com/GuangchuangYu
-  生信技能树: https://vip.biotrainee.com/
+  52破解: https://www.52pojie.cn/
+  先知: https://xz.aliyun.com/
+  安全客: https://www.anquanke.com/
+  freebuf: https://www.freebuf.com/
 
 # ---------------------------------------------------------------
 # Post Settings
@@ -339,7 +337,7 @@ post_wordcount:
 
 # Declare license on posts
 post_copyright:
-  enable: true
+  enable: false
   license: CC BY-NC-SA 3.0
   license_url: https://creativecommons.org/licenses/by-nc-sa/3.0/
 
@@ -383,7 +381,7 @@ han: false
 #swiftype_key:
 
 # Baidu Analytics ID
-baidu_analytics: 36443ede179652b0cf6a526f12b1976f
+baidu_analytics: 
 
 # Duoshuo ShortName
 #duoshuo_shortname:

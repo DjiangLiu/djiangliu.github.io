@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # NexT
 
 > 精于心，简于形
@@ -29,11 +28,16 @@ NexT 主旨在于简洁优雅且易于使用，所以首先要尽量确保 NexT 
 NexT is built for easily use with elegant appearance. First things first, always keep things simple.
 
 
-## 捐赠
+## 捐赠（模板作者）
 
 支付宝捐赠链接还是要有的，万一真的有人捐呢。
 
 ![支付宝扫码捐赠](http://7lryc0.com1.z0.glb.clouddn.com/a6x049034plyvjm1rvn4h28%20%281%29.png)
 =======
-# DjiangLiu.github.io
->>>>>>> 5d64c1425f930e07747c102bfa7b3bbf594f455b
+
+## 捐赠（博客作者）
+
+支付宝捐赠链接还是要有的，万一真的有人捐呢。感情这种事谁说的好呢！
+
+![支付宝扫码捐赠](https://github.com/DjiangLiu/DjiangLiu.github.io/blob/master/images/reward_image/alipay-reward-image.jpg)
+=======

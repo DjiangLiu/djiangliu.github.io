@@ -4,12 +4,12 @@
 # ---------------------------------------------------------------
 
 # Site
-title: capableapable
-subtitle:
-description:
+title: Capable
+subtitle:Change's a good thing
+description:人生若只如初见，何事悲风秋画扇。
 author: DjiangLiu
 # Support language: de, en, fr-FR, id, ja, ko, pt-BR, pt, ru, zh-Hans, zh-hk, zh-tw
-language: en
+language: zh-Hans
 date_format: '%Y-%m-%d'
 
 # URL

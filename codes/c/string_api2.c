@@ -4,18 +4,18 @@
 
 size_t My_strlen1(const char *str)
 {
-	//size_tæ˜¯æ ‡å‡†Cåº“ä¸­å®šä¹‰çš„ï¼Œåº”ä¸ºunsigned intï¼Œåœ¨64ä½ç³»ç»Ÿä¸­ä¸º long unsigned intã€‚
-	//size_tä¸­çš„tæ˜¯typeï¼ˆç±»å‹ï¼‰çš„æ„æ€ã€‚size_tçš„æ„æ€æ˜¯size of typeï¼Œå³æŸç§ç±»å‹çš„å¤§å°ï¼ˆå­—èŠ‚æ•°ï¼‰
+	//size_tÊÇ±ê×¼C¿âÖĞ¶¨ÒåµÄ£¬Ó¦Îªunsigned int£¬ÔÚ64Î»ÏµÍ³ÖĞÎª long unsigned int¡£
+	//size_tÖĞµÄtÊÇtype£¨ÀàĞÍ£©µÄÒâË¼¡£size_tµÄÒâË¼ÊÇsize of type£¬¼´Ä³ÖÖÀàĞÍµÄ´óĞ¡£¨×Ö½ÚÊı£©
 	size_t count = 0;
-	if (str==NULL)
+	if (str == NULL)
 	{
 		return 0;
 	}
-	
-	while (*str!='\0')
+
+	while (*str != '\0')
 	{
 		count++;
-		//stræ˜¯ä¸€ä¸ªå­—ç¬¦ä¸²æŒ‡é’ˆï¼Œæ¯æ¬¡æŒ‡å‘ä¸‹ä¸€ä¸ª
+		//strÊÇÒ»¸ö×Ö·û´®Ö¸Õë£¬Ã¿´ÎÖ¸ÏòÏÂÒ»¸ö
 		str++;
 	}
 	return count;
@@ -23,13 +23,13 @@ size_t My_strlen1(const char *str)
 
 size_t My_strlen2(const char *str)
 {
-	//å…ˆç”¨eosæŒ‡å‘å­—ç¬¦ä¸²çš„å¤´éƒ¨ï¼Œç„¶åç§»åŠ¨åˆ°æœ«å°¾
-	//æœ€åæœ«å°¾å‡å¤´éƒ¨ï¼Œåœ¨å‡'\0'
-	if (str==NULL)
+	//ÏÈÓÃeosÖ¸Ïò×Ö·û´®µÄÍ·²¿£¬È»ºóÒÆ¶¯µ½Ä©Î²
+	//×îºóÄ©Î²¼õÍ·²¿£¬ÔÚ¼õ'\0'
+	if (str == NULL)
 	{
 		return 0;
 	}
-	
+
 	const char *eos = str;
 	while (*eos++);
 	return (size_t)(eos - str - 1);
@@ -37,56 +37,184 @@ size_t My_strlen2(const char *str)
 
 size_t My_strlen3(const char *str)
 {
-	//åˆ©ç”¨å­ä¸²è¿›è¡Œé€’å½’æŸ¥æ‰¾
-	//æœ€ç®€å­é—®é¢˜
-	if (str==NULL||*str=='\0')
+	//ÀûÓÃ×Ó´®½øĞĞµİ¹é²éÕÒ
+	//×î¼ò×ÓÎÊÌâ
+	if (str == NULL || *str == '\0')
 	{
 		return 0;
 	}
-	return 1+My_strlen3(str+1);
+	return 1 + My_strlen3(str + 1);
 }
 
 size_t My_strlen4(const char *str)
 {
-	return (str==NULL||*str=='\0')?0:1+My_strlen4(str+1);
+	return (str == NULL || *str == '\0') ? 0 : 1 + My_strlen4(str + 1);
 }
 
-char *My_strcpy(char *dst,const char *src)
+char *My_strcpy(char *dst, const char *src)
 {
-	char *s=dst;
-	while (*s++=*src++);
-	return dst;	
+	char *s = dst;
+	while (*s++ = *src++);
+	return dst;
 }
 
-int My_strcmp(const char *s1,const char *s2)
+int My_strcmp(const char *s1, const char *s2)
 {
-	//æ–­è¨€åªåœ¨è°ƒè¯•ç‰ˆæœ¬æœ‰æ•ˆï¼Œå¦‚æœä¸ºå‡åˆ™æŠ›å‡ºå¼‚å¸¸
-	//releaseç‰ˆæœ¬å·²å–æ¶ˆï¼Œdebugå¯ç”¨
+	//¶ÏÑÔÖ»ÔÚµ÷ÊÔ°æ±¾ÓĞĞ§£¬Èç¹ûÎª¼ÙÔòÅ×³öÒì³£
+	//release°æ±¾ÒÑÈ¡Ïû£¬debug¿ÉÓÃ
 	//assert(s1!=NULL&&s2!=NULL);
-	if (s1==NULL||s2==NULL)
+	if (s1 == NULL || s2 == NULL)
 	{
 		return 0;
 	}
-	while (*s1&&*s2&&(*s1==*s2))
+	while (*s1&&*s2 && (*s1 == *s2))
 	{
 		s1++;
 		s2++;
 	}
-	return *s1-*s2;	
+	return *s1 - *s2;
+}
+
+char *My_strtok_r1(char* string_org, const char* demial)
+{
+	static unsigned char* last;//±£´æ·Ö¸ôºóµÄ×Ö·û´®
+	unsigned char* str;//·µ»ØµÄ×Ö·û´®
+	const unsigned char* ctrl = (const unsigned char*)demial;//·Ö¸ô·û
+
+	//½«·Ö¸ô·û·ÅÔÚË÷Òı±íÖĞ¡£¶¨Òå32ÊÇÒòÎªASCII×Ö·û±í×î¶àÊÇ0~255¸ö£¬Ò²ÊÇËµÓÃ×î´óµÄ255ÓÒÒÆ3Î»£¬Ò²¾ÍÊÇ³ıÒÔ8Ò»¶¨»áÊÇ32ÖĞµÄÒ»¸öÊı¡£
+	unsigned char map[32];
+	int count;
+
+	//°ÑmapÇå0£¬Ö®ºóÏàÓë²Ù×÷£¬Óë0µÄ¶¼Îª0
+	for (count = 0; count < 32; count++)
+	{
+		map[count] = 0;
+	}
+
+	//°ÑÆ¥Åä×Ö·û·ÅÈë±íÖĞ£¬
+	//·ÅÈëµÄËã·¨ÊÇ°ÑÆ¥ÅäµÄ×Ö·ûÓÒÒÆÈıÎ»£¬Ïàµ±ÓÚ³ıÒÔ8£¬µÄÊıÖµ²¢¼ÓÉÏ
+	//Æ¥Åä×Ö·ûÓë7£¬µÃµ½µÍÈıÎ»£¬µÃµ½µÄ½á¹ûÊÇ°Ñ1×óÒÆµÄÎ»Êı£¬×î´ó×óÒÆÎ»ÊıÊÇ7£¬
+	//Ò²¾ÍÊÇËùÄÜ±íÊ¾µÄ×î´óÖµ127
+	do
+	{
+		map[*ctrl >> 3] |= (1 << (*ctrl & 7));
+	} while (*ctrl++);
+
+	/*
+	Ô­Ê¼×Ö·û´®ÊÇ·ñÎª¿Õ£¬Èç¹ûÎª¿Õ±íÊ¾µÚ¶ş´Î»ñÈ¡µÄÊ£Óà×Ö·ûµÄ·Ö¸ô²¿·Ö
+	*/
+	if (string_org)
+	{
+		str = (unsigned char*)string_org;
+	}
+	else
+	{
+		str = last;
+	}
+
+	//ÔÚÁĞ±íÖĞ²éÕÒÊÇ·ñÓĞÆ¥ÅäµÄ×Ö·û£¬Èç¹ûÓĞÂÔ¹ı
+	while ((map[*str >> 3] & (1 << (*str & 7))) && *str)
+	{
+		str++;
+	}
+
+	//ÖØÖÃĞèÒªÉ¨ÃèµÄ×Ö·û´®
+	string_org = (char*)str;
+
+	//¿ªÊ¼É¨Ãè
+	for (; *str; str++)
+	{
+		if (map[*str >> 3] & (1 << (*str & 7)))
+		{
+			*str++ = '\0';
+			break;
+		}
+	}
+
+	last = str;//°ÑÊ£ÓàµÄ±£´æµ½¾²Ì¬±äÁ¿lastÖĞ
+	if (string_org == (char*)str)
+	{
+		return NULL;//Ã»ÓĞÕÒµ½£¬Ò²¾ÍÊÇÒÆ¶¯Ö¸ÕëµÄÎ»ÖÃ
+	}
+	else
+	{
+		return string_org;//ÕÒµ½ÁË£¬·µ»ØÖ®Ç°×Ö·û´®µÄÍ·Ö¸Õë
+	}
+}
+
+
+char*  My_strtok_r2(char* string_org, const char* demial, char** last)
+{
+	const char* spanp; //span±íÊ¾·Ö¸ô£¬p±íÊ¾Ö¸Õë
+	char c, sc; //c±íÊ¾char×Ö·û£¬sc±íÊ¾ span char
+	char* tok;  //token±íÊ¾·Ö¸ôµÄ¶Î
+	//µ±¿ªÊ¼½áÎ²¶¼ÎªNULLµÄÊ±ºò£¬ËµÃ÷Ã»ÓĞ×Ö·û±»²éÕÒ£¬ËùÒÔ·µ»ØNULL
+	if (string_org == NULL && (string_org = *last) == NULL)
+	{
+		return (NULL);
+	}
+	//ÓÉgoto×é³ÉµÄÑ­»·ÊÇÔÚÉ¨Ãè×Ö·û´®µÄÊ±ºò£¬µ±Óöµ½ËùĞèÒªÆ¥ÅäµÄ×Ö·ûÊ±£¬ÂÔ¹ıÕâ¸ö×Ö·û¡£        
+count:
+	c = *string_org++;
+	for (spanp = demial; (sc = *spanp++) != 0; )
+	{
+		if (c == sc)
+		{
+			goto count;
+		}
+	}
+	//ÏÂÒ»¸ö×Ö·ûÎª0£¬Ôò±íÊ¾µ½´ïÁËËÑË÷½á¹û£¬°ÑlastÖÃÎªNULL£¬²¢·µ»ØNULL            
+	if (c == 0)
+	{
+		*last = NULL;
+		return (NULL);
+	}
+	//°ÑÔ­Ê¼µÄ×Ö·û´®Ö¸Õë»ØÍË¡£            
+	tok = string_org - 1;
+	//¿ªÊ¼É¨Ãè×Ö·û´®ÖĞÊÇ·ñº¬ÓĞÒªÆ¥ÅäµÄ×Ö·û£¬Ö®ºó°ÑÕâ¸öÆ¥Åä×Ö·ûÖ®Ç°µÄ²¿·Ö·µ»Ø¡£
+	//Õâ¿´ËÆÊÇ¸öÎŞÏŞÑ­»·£¬µ«µ±Ô´×Ö·û´®ºÍÆ¥Åä×Ö·û´®¶¼×ßµ½½áÎ²Ê±£¬Ò²¾ÍÊÇstring_orgºÍsc¶¼ÎªNULLÊ±£¬×îÍâ²ãÑ­»·×îºó»á×ßµ½return(tok)½áÊøÑ­»·¡£
+	for (;;)
+	{
+		c = *string_org++;
+		spanp = demial;
+		do
+		{
+			if ((sc = *spanp++) == c)
+			{
+				if (c == 0)
+				{
+					string_org = NULL;
+				}
+				else
+				{
+					string_org[-1] = 0;
+				}
+				*last = string_org;
+				return (tok);
+			}
+		} while (sc != 0);
+	}
+}
+
+
+char* My_strtok(char *s, const char *delim)
+{
+	static char *lasts;
+	return My_strtok_r2(s, delim, &lasts);
 }
 
 int main(void)
 {
-	//å¾ªç¯æ¯”é€’å½’æ›´å¥½ï¼Œæ¶‰åŠæ ˆå’Œå‡½æ•°è°ƒç”¨çº¦å®šã€‚
-	//å†…æ ¸å±‚ä¸¥ç¦ä½¿ç”¨é€’å½’
-	//ä¸€å®šè¦å¯¹å‚æ•°çš„åˆæ³•æ€§è¿›è¡ŒéªŒè¯
+	//Ñ­»·±Èµİ¹é¸üºÃ£¬Éæ¼°Õ»ºÍº¯Êıµ÷ÓÃÔ¼¶¨¡£
+	//ÄÚºË²ãÑÏ½ûÊ¹ÓÃµİ¹é
+	//Ò»¶¨Òª¶Ô²ÎÊıµÄºÏ·¨ĞÔ½øĞĞÑéÖ¤
 	const char *str = "hello world";
 	const char *str2 = "hello world";
-	char buf[128] = {0};
-	My_strcpy(buf,str);
-	printf("%s\n",buf);
+	char buf[128] = { 0 };
+	My_strcpy(buf, str);
+	printf("%s\n", buf);
 
-	if(My_strcmp(str,str2)==0)
+	if (My_strcmp(str, str2) == 0)
 	{
 		printf("str == str2\n");
 	}
@@ -94,14 +222,44 @@ int main(void)
 	{
 		printf("str != str2\n");
 	}
-	
 
-	printf("%d\n",sizeof(size_t));
-	printf("%d\n",My_strlen1(str));
-	printf("%d\n",My_strlen2(str));
-	printf("%d\n",My_strlen3(str));
-	printf("%d\n",My_strlen4(str));
-	printf("%d\n",strlen(str));
+
+
+	printf("%d\n", sizeof(size_t));
+	printf("%d\n", My_strlen1(str));
+	printf("%d\n", My_strlen2(str));
+	printf("%d\n", My_strlen3(str));
+	printf("%d\n", My_strlen4(str));
+	printf("%d\n", strlen(str));
+
+
+
+
+	char str4[] = "- This, a sample string.";
+	char * pch1;
+	printf("Splitting string \"%s\" into tokens:\n", str4);
+	pch1 = My_strtok_r1(str4, " ,.-");
+	while (pch1 != NULL)
+	{
+		printf("%s\n", pch1);
+		pch1 = My_strtok_r1(NULL, " ,.-");
+	}
+
+
+	char str5[] = "- This, a sample string.";
+	char * pch;
+	printf("Splitting string \"%s\" into tokens:\n", str5);
+	pch = My_strtok(str5, " ,.-");
+	while (pch != NULL)
+	{
+		printf("%s\n", pch);
+		pch = My_strtok(NULL, " ,.-");
+	}
+
+
+
+
+
 	getchar();
 	return 0;
 }

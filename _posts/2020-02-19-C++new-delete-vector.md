@@ -1,5 +1,5 @@
 ---
-title: C++友元函数和运算符重载
+title: C++new-delete-vector
 date: 2020-2-19
 categories: 
 - C++

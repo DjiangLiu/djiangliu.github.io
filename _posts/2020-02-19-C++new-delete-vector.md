@@ -1,5 +1,5 @@
 ---
-title: C++new-delete-vector
+title: 数据结构-vector
 date: 2020-2-19
 categories: 
 - C++
@@ -7,6 +7,7 @@ tags:
 - new
 - delete
 - vector
+- 数据结构
 ---
 
 # 向量Vector特点

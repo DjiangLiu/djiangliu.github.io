@@ -77,7 +77,7 @@ plugins:
 favicon: /assets/favicon.ico
 
 # Set default keywords (Use a comma to separate)
-keywords: "Jekyll, NexT"
+keywords: "Jekyll, NexT, DjiangLiu"
 
 # Set rss to false to disable feed link.
 # Leave rss as empty to use site's feed link.
@@ -291,10 +291,10 @@ sidebar:
   #Title: http://example.com/
 links_title: 推荐阅读
 links:
-  52破解: https://www.52pojie.cn/
-  先知: https://xz.aliyun.com/
-  安全客: https://www.anquanke.com/
-  freebuf: https://www.freebuf.com/
+  # 52破解: https://www.52pojie.cn/
+  # 先知: https://xz.aliyun.com/
+  # 安全客: https://www.anquanke.com/
+  # freebuf: https://www.freebuf.com/
 
 # ---------------------------------------------------------------
 # Post Settings

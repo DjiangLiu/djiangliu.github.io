@@ -1,5 +1,5 @@
 ---
-title: Tomcat Servlet 内存马
+title: Tomcat Linsen 内存马
 date: 2025-12-27
 categories: 
 - web漏洞
@@ -10,5 +10,5 @@ tags:
 - Java安全
 ---
 
-# linsen
+# Linsen
 

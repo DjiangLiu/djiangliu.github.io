@@ -1,9 +1,8 @@
 ---
 title: Tomcat Filter 内存马
 date: 2025-12-27
-weight: 3
 categories: 
-- web漏洞
+- 漏洞分析
 tags: 
 - tomcat
 - filter

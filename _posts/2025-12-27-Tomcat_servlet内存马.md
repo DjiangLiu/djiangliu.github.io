@@ -1,9 +1,8 @@
 ---
 title: Tomcat Servlet 内存马
 date: 2025-12-27
-weight: 2
 categories: 
-- web漏洞
+- 漏洞分析
 tags: 
 - tomcat
 - servlet

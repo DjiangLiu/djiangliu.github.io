@@ -705,3 +705,6 @@ images: assets/images
 
 # Theme version
 version: 5.1.1
+
+index_generator:
+  sort_by: date

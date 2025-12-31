@@ -140,7 +140,7 @@ public class Sec88540Application {
 
 
 
-![image-20251231154226823](/images/2025-12-30-Spring MVC 拦截器.assets/image-20251231154226823.png)
+![image-20251231154226823](/images/2025-12-30-SpringMVC拦截器.assets/image-20251231154226823.png)
 
 ## 注解配置
 
@@ -165,7 +165,7 @@ public class MyWebMvcConfigurerAdapter implements WebMvcConfigurer {
 
 ```
 
-![image-20251231152809018](/images/2025-12-30-Spring MVC 拦截器.assets/image-20251231152809018.png)
+![image-20251231152809018](/images/2025-12-30-SpringMVC拦截器.assets/image-20251231152809018.png)
 
 
 

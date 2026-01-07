@@ -7,10 +7,6 @@ tags:
 - 拦截器
 ---
 
-```
-Spring作为老牌全能型框架，要想拦截请求进行一些统一的处理，我们有Filter、Interceptor、ControllerAdvice、AOP这么多种截面可供选择： Filter——作用在最外层，在请求进入Spring之前就触发，可以用于处理一些网络通信层面的东西； Interceptor——作用在Controller的外层，数据进入Controller层之前，或离开Controller的前后触发； ControllerAdvice——作用在Interceptor之内，数据进入Controller层但还没处理之前触发，用于预处理Controller层的RequestBody和ResponseBody，以及统一异常处理； AOP——作用于自己写的方法。 使用的时候遵循“最小作用域”原理，在保证能统一抽象出来的前提下，选择最近最小的那个截面。
-```
-
 # 拦截器配置
 
 ```xml
@@ -60,9 +56,42 @@ public class Index {
         System.out.println(form);
         return form;
     }
-}
 
+    @RequestMapping("/login")
+    private String login(String name) {
+        String form = name + "login";
+        System.out.println(form);
+        return form;
+    }
+
+    @RequestMapping("/info")
+    private String info(String name) {
+        String form = name + "info";
+        System.out.println(form);
+        return form;
+    }
+}
 ```
+
+```java
+package com.asset.sec88540.controller;
+
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@RequestMapping("/user")
+public class user {
+    @RequestMapping("info")
+    public String info(String name) {
+        String form = name + "  user info";
+        System.out.println(form);
+        return form;
+    }
+}
+```
+
+
 
 ```java
 package com.asset.sec88540;
@@ -169,3 +198,31 @@ public class MyWebMvcConfigurerAdapter implements WebMvcConfigurer {
 
 
 
+## 拦截器拦截顺序
+
+1. 同时命中`addPathPatterns`和`excludePathPatterns`，走`excludePathPatterns`
+
+```java
+    public void addInterceptors(InterceptorRegistry registry) {
+        registry.addInterceptor(interceptorDemo())
+                .addPathPatterns("/index/**")
+                .excludePathPatterns("/index/login");
+    }
+        // /index/index → 在add中、不在exclude → 拦截
+        // /index/login → 在add中、但在exclude → 不拦截
+        // /user/info → 不在add、不在exclude → 不拦截
+```
+
+![image-20260107094032283](/images/2025-12-30-Spring MVC 拦截器.assets/image-20260107094032283.png)
+
+2. 未指定`addPathPatterns`（使用默认`/**`）
+
+```java
+    @Override
+    public void addInterceptors(InterceptorRegistry registry) {
+        registry.addInterceptor(interceptorDemo())
+                .excludePathPatterns("/index/login");
+    }
+```
+
+![image-20260107092923538](/images/2025-12-30-Spring MVC 拦截器.assets/image-20260107092923538.png)

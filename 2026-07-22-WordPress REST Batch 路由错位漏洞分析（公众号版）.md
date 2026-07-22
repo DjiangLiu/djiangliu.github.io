@@ -43,6 +43,76 @@
 
 关键点在于，解析失败的分支只把错误放进了 `$validation`，没有同步放进 `$matches`。后续 dispatch 又按同一个下标同时读取这三组数组，于是执行对象和验证对象开始错位。
 
+先看解析阶段。遇到无法解析的子请求路径时，代码只把错误对象放进 `$requests`：
+
+```php
+foreach ( $batch_request['requests'] as $args ) {
+    $parsed_url = wp_parse_url( $args['path'] );
+
+    if ( false === $parsed_url ) {
+        $requests[] = new WP_Error(
+            'parse_path_failed',
+            __( 'Could not parse the path.' ),
+            array( 'status' => 400 )
+        );
+
+        continue;
+    }
+
+    $single_request = new WP_REST_Request(
+        $args['method'] ?? 'POST',
+        $parsed_url['path']
+    );
+
+    $requests[] = $single_request;
+}
+```
+
+再看校验阶段。这里遇到 `WP_Error` 时，只写入 `$validation`，没有写入 `$matches`：
+
+```php
+foreach ( $requests as $single_request ) {
+    if ( is_wp_error( $single_request ) ) {
+        $has_error    = true;
+        $validation[] = $single_request;
+        continue;
+    }
+
+    $match     = $this->match_request_to_handler( $single_request );
+    $matches[] = $match;
+
+    // 后续继续做 allow_batch、has_valid_params、sanitize_params 校验。
+}
+```
+
+最后看执行阶段。代码假设 `$requests[$i]`、`$matches[$i]`、`$validation[$i]` 仍然一一对应：
+
+```php
+foreach ( $requests as $i => $single_request ) {
+    if ( is_wp_error( $single_request ) ) {
+        $result      = $this->error_to_response( $single_request );
+        $responses[] = $this->envelope_response( $result, false )->get_data();
+        continue;
+    }
+
+    $match = $matches[ $i ];
+
+    if ( is_wp_error( $validation[ $i ] ) ) {
+        $error = $validation[ $i ];
+    }
+
+    list( $route, $handler ) = $match;
+    $result = $this->respond_to_request(
+        $single_request,
+        $route,
+        $handler,
+        $error
+    );
+}
+```
+
+这三段代码合起来，就是问题的核心：**某个请求可以拿到不属于自己的 `$match` 和 `$handler`**。
+
 可以把它理解成一个很典型的状态机问题：
 
 - 验证数组记录的是“这个子请求有没有过关”
@@ -61,6 +131,41 @@ REST 参数不是“进了请求就一定会被处理”。`WP_REST_Request::san
 - `wp-includes/rest-api/endpoints/class-wp-rest-posts-controller.php:245-272`
 - `wp-includes/rest-api/endpoints/class-wp-rest-posts-controller.php:2995-3011`
 
+关键逻辑在 `sanitize_params()`：
+
+```php
+foreach ( $this->params[ $type ] as $key => $value ) {
+    if ( ! isset( $attributes['args'][ $key ] ) ) {
+        continue;
+    }
+
+    $param_args = $attributes['args'][ $key ];
+
+    if ( ! array_key_exists( 'sanitize_callback', $param_args )
+        && ! empty( $param_args['type'] )
+    ) {
+        $param_args['sanitize_callback'] = 'rest_parse_request_arg';
+    }
+
+    $sanitized_value = call_user_func(
+        $param_args['sanitize_callback'],
+        $value,
+        $this,
+        $key
+    );
+}
+```
+
+注意这个分支：
+
+```php
+if ( ! isset( $attributes['args'][ $key ] ) ) {
+    continue;
+}
+```
+
+意思是：如果当前 route schema 没有声明这个参数，它不会被当作非法参数报错，而是直接跳过。
+
 这就造成一个很关键的差异：
 
 - item route 只认 item schema
@@ -68,11 +173,52 @@ REST 参数不是“进了请求就一定会被处理”。`WP_REST_Request::san
 
 如果 request 在路由和执行阶段发生错位，参数会在“校验视角”里消失，却在“执行视角”里重新出现。
 
+posts collection 里又有一层参数映射：
+
+```php
+$parameter_mappings = array(
+    'author'         => 'author__in',
+    'author_exclude' => 'author__not_in',
+    'exclude'        => 'post__not_in',
+    'include'        => 'post__in',
+    'parent_exclude' => 'post_parent__not_in',
+    'orderby'        => 'orderby',
+);
+
+foreach ( $parameter_mappings as $api_param => $wp_param ) {
+    if ( isset( $registered[ $api_param ], $request[ $api_param ] ) ) {
+        $args[ $wp_param ] = $request[ $api_param ];
+    }
+}
+```
+
+所以，route-confusion 一旦成立，就会出现这种现象：**校验阶段没处理的参数，执行阶段被 collection handler 当作查询条件消费。**
+
 ### 2.3 SQL sink 的危险点
 
 真正把问题放大的，是 `WP_Query` 里对作者排除条件的处理方式。
 
 源码位置：`wp-includes/class-wp-query.php:2399-2405`
+
+7.0.1 中相关逻辑如下：
+
+```php
+if ( ! empty( $query_vars['author__not_in'] ) ) {
+    if ( is_array( $query_vars['author__not_in'] ) ) {
+        $query_vars['author__not_in'] = array_unique(
+            array_map( 'absint', $query_vars['author__not_in'] )
+        );
+        sort( $query_vars['author__not_in'] );
+    }
+
+    $author__not_in = implode(
+        ',',
+        (array) $query_vars['author__not_in']
+    );
+
+    $where .= " AND {$wpdb->posts}.post_author NOT IN ($author__not_in) ";
+}
+```
 
 它的特征是：
 
@@ -82,6 +228,28 @@ REST 参数不是“进了请求就一定会被处理”。`WP_REST_Request::san
 
 这种写法的问题不在“有没有转义函数”，而在于 **不同输入形态走了不同的安全策略**。  
 7.0.2 改成统一的 ID 列表规范化后，这个差异被收敛了。
+
+7.0.2 的写法更稳：
+
+```php
+if ( ! empty( $query_vars['author__not_in'] ) ) {
+    $author__not_in_id_list = wp_parse_id_list(
+        $query_vars['author__not_in']
+    );
+
+    if ( count( $author__not_in_id_list ) > 0 ) {
+        sort( $author__not_in_id_list );
+        $where .= sprintf(
+            " AND {$wpdb->posts}.post_author NOT IN (%s) ",
+            implode( ',', $author__not_in_id_list )
+        );
+
+        $query_vars['author__not_in'] = $author__not_in_id_list;
+    }
+}
+```
+
+这里的重点不是 `sprintf()`，而是前面的 `wp_parse_id_list()`：不管输入原本是数组还是标量，都会先统一归一成 ID 列表。
 
 ### 2.4 为什么说这是“上下文问题”
 
@@ -100,6 +268,56 @@ REST 参数不是“进了请求就一定会被处理”。`WP_REST_Request::san
 - 查询结果会进入当前请求的 post cache
 - Customizer 发布时可以临时切换 current_user
 - post 状态转换会触发动态 hook
+
+例如 REST 分发时，权限检查和 callback 是连续执行的：
+
+```php
+if ( ! is_wp_error( $response )
+    && ! empty( $handler['permission_callback'] )
+) {
+    $permission = call_user_func(
+        $handler['permission_callback'],
+        $request
+    );
+}
+
+if ( ! is_wp_error( $response ) ) {
+    $response = call_user_func( $handler['callback'], $request );
+}
+```
+
+再看 `WP_Query` 查询结果进入运行期缓存：
+
+```php
+if ( $query_vars['cache_results'] ) {
+    if ( $is_unfiltered_query && $unfiltered_posts === $this->posts ) {
+        update_post_caches(
+            $this->posts,
+            $post_type,
+            $query_vars['update_post_term_cache'],
+            $query_vars['update_post_meta_cache']
+        );
+    }
+}
+```
+
+Customizer 发布时，还会根据 changeset 中记录的用户临时切换当前用户：
+
+```php
+$original_user_id = get_current_user_id();
+
+foreach ( $changeset_setting_ids as $setting_id ) {
+    if ( isset( $setting_user_ids[ $setting_id ] ) ) {
+        wp_set_current_user( $setting_user_ids[ $setting_id ] );
+    } else {
+        wp_set_current_user( $original_user_id );
+    }
+
+    $setting->save();
+}
+
+wp_set_current_user( $original_user_id );
+```
 
 所以漏洞真正被利用的，是 **请求内上下文的连续性**。
 

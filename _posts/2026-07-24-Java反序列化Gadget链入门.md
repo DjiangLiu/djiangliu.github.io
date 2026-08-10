@@ -101,7 +101,7 @@ chain.transform(null);   // 依次执行 1→2→3→4 → Runtime.getRuntime().
 ```
 > 为什么不直接 `new InvokerTransformer("exec", ...)` 一步到位？因为 `Runtime` 构造方法是私有的，必须先反射 `getMethod("getRuntime")` 拿到方法、再 `invoke` 得到实例，最后才能 `exec`。这就是 payload 里常见"getMethod → invoke → exec"三段式的原因。
 
-![image-20260810092032949](./2026-07-24-Java反序列化Gadget链入门.assets/image-20260810092032949.png)
+![image-20260810092032949](/images/2026-07-24-Java反序列化Gadget链入门.assets/image-20260810092032949.png)
 
 到这里，"有 `transform()` 调用 → 就执行命令"已经成立。现在的问题是：**反序列化时，谁会去调 `transform()`？**
 

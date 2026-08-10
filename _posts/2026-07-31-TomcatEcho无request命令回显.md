@@ -47,7 +47,6 @@ public class ListenerShell implements ServletRequestListener {
     public void requestInitialized(ServletRequestEvent sre) { /* ... */ }
 }
 ```
-
 这些场景下，`RequestContextHolder`（Spring）拿不到、`request.getSession().getServletContext()` 更拿不到——**只能从 JVM / 容器内部结构反推**。
 
 ---
@@ -67,7 +66,6 @@ Field respField = innerRequest.getClass().getDeclaredField("response");
 respField.setAccessible(true);
 HttpServletResponse response = (HttpServletResponse) respField.get(innerRequest);
 ```
-
 但它**依赖手里有一个 request 对象**。static 块 / 构造方法里什么都没有，这条路走不通——只能上 TomcatEcho。
 
 ---
@@ -93,7 +91,6 @@ Thread.currentThread().getContextClassLoader()   // WebappClassLoaderBase
   → getNote(1)         : connector.Request          // 还原成高层请求对象
   → getResponse()      : connector.Response         // 回显
 ```
-
 `processors[]` 里是**所有已分配的 RequestInfo**（当前正在处理的请求一定在列表里），遍历它逐个 `getNote(1)`，就能拿到当前线程正在处理的请求。
 
 ### 3.2 代码实现
@@ -132,7 +129,6 @@ public class TomcatEcho {
     }
 }
 ```
-
 ### 3.3 getField()：链式反射工具
 
 上面的 `getField(obj, clazz, "a:b", "c_1:d", ...)` 支持三种语法：
@@ -164,7 +160,6 @@ public static Object getField(Object obj, Class<?> clazz, String... fieldNames) 
     return obj;
 }
 ```
-
 例如 `"connectors_0:org.apache.catalina.connector.Connector"` = 取 `connectors` 字段的第 0 个元素并强转成 `Connector`。**链式反射 + 类型标注**，把原本十几行的逐字段反射压缩成一行参数表，直观且不易写错。
 
 ### 3.4 为什么 getNote(1)
@@ -201,7 +196,6 @@ public static Object getField(Object obj, Class<?> clazz, String... fieldNames) 
 # 内存 dump / Arthas 中找 TomcatEcho 特征：getNote(1)、RequestInfo、processors 反射遍历
 # 或用 RASP 记录 ClassLoader.defineClass 与对 RequestInfo / coyote.Request 的反射访问
 ```
-
 | 检测维度 | 说明 |
 |----------|------|
 | 反射调用特征 | 对 `RequestInfo` / `getNote` / `processors` 的非启动阶段反射 |

